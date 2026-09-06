@@ -1,3 +1,9 @@
+<!-- Must stay the first thing in the file. Published as an Artifact this is redundant (the
+     wrapper supplies a charset in its own head, and this lands in the body where the
+     parser ignores it), but served as a standalone page from a host that sends no charset
+     it is the difference between an em-dash and "â€”". Harmless in one home, load-bearing
+     in the other. -->
+<meta charset="utf-8">
 <title>Kaam Direct</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
