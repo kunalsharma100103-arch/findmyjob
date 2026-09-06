@@ -76,8 +76,7 @@ header.top{border-bottom:1px solid var(--line);background:var(--surface)}
 /* ---------- layout ---------- */
 .cols{display:grid;grid-template-columns:264px minmax(0,1fr);gap:30px;padding:24px 0 64px;align-items:start}
 @media (max-width:900px){.cols{grid-template-columns:1fr;gap:20px}}
-.rail{position:sticky;top:14px;display:flex;flex-direction:column;gap:16px}
-@media (max-width:900px){.rail{position:static}}
+.rail{display:flex;flex-direction:column;gap:16px}
 
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px}
 .panel-h{padding:12px 14px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:8px}
