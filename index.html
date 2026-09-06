@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 :root{
@@ -958,9 +959,15 @@ function renderTailor(out, job) {
     <div class="sec"><h4>Experience, reordered for this posting</h4>${exp}</div>
     ${(out.changes || []).length ? `<div class="sec"><h4>What changed, and why</h4><ul>${out.changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>` : ""}`;
 
-  $("dfoot").innerHTML = `<button class="btn" id="dl">Download .docx</button>
+  // .docx leads because ATS parsers read it most reliably; PDF is there for a human
+  // reader or a form that insists on one.
+  $("dfoot").innerHTML = `<span class="note" style="margin-right:auto;align-self:center">
+      .docx parses most reliably in applicant systems</span>
+    <button class="btn" id="dl">Download .docx</button>
+    <button class="btn quiet" id="dlpdf">Download PDF</button>
     <a class="btn ghost" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`;
-  $("dl").addEventListener("click", downloadDocx);
+  $("dl").addEventListener("click", () => downloadCv("docx"));
+  $("dlpdf").addEventListener("click", () => downloadCv("pdf"));
 }
 
 /* ---------- docx ----------
@@ -1055,32 +1062,128 @@ function buildDocx(out, job) {
   return zip.generateAsync({ type: "uint8array", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 }
 
-async function downloadDocx() {
+/* ---------- pdf ----------
+   Same ATS rules as the docx: one column, real selectable text (never an image of a CV,
+   which parses as nothing), a standard font, standard section headings. jsPDF's built-in
+   Helvetica is the PDF equivalent of Arial and is what keeps the file text-extractable.
+
+   .docx stays the default. ATS parsers handle it more reliably than PDF, and a PDF that
+   goes through a weak parser loses its structure. PDF is the right choice when a person
+   is going to read it, or when the form insists. */
+const PT = { page: 841.89, width: 595.28, margin: 46 };
+
+//: jsPDF's built-in fonts are WinAnsi, so anything past Latin-1 renders as noise. Curly
+//: quotes and dashes are the ones that actually turn up in generated CV text.
+const pdfSafe = (s) => String(s ?? "")
+  .replace(/[‘’‛]/g, "'")
+  .replace(/[“”]/g, '"')
+  .replace(/[–—−]/g, "-")
+  .replace(/[•·]/g, "-")
+  .replace(/ /g, " ")
+  // The rupee sign sits outside Latin-1 and the strip below would drop it silently,
+  // turning "₹4.2 crore" into "4.2 crore" — a figure surviving without its unit is worse
+  // than spelling the unit out. Same for the other currencies that appear in CVs here.
+  .replace(/₹/g, "INR ").replace(/€/g, "EUR ")
+  .replace(/£/g, "GBP ").replace(/[¥￥]/g, "JPY ")
+  .replace(/[^\x20-\xFF\n]/g, "");
+
+function buildPdf(out, job) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const right = PT.width - PT.margin;
+  const wide = right - PT.margin;
+  let y = PT.margin;
+
+  const room = (need) => { if (y + need > PT.page - PT.margin) { doc.addPage(); y = PT.margin; } };
+  const write = (text, { size = 10, bold = false, gap = 3, indent = 0 } = {}) => {
+    if (!text) return;
+    doc.setFont("helvetica", bold ? "bold" : "normal").setFontSize(size);
+    const lines = doc.splitTextToSize(pdfSafe(text), wide - indent);
+    for (const line of lines) {
+      room(size + gap);
+      doc.text(line, PT.margin + indent, y);
+      y += size + gap;
+    }
+  };
+  const section = (title) => {
+    room(30);
+    y += 9;
+    write(title.toUpperCase(), { size: 11, bold: true, gap: 3 });
+    doc.setDrawColor(140).setLineWidth(0.5).line(PT.margin, y - 4, right, y - 4);
+    y += 4;
+  };
+  const bullet = (text) => {
+    doc.setFont("helvetica", "normal").setFontSize(10);
+    const lines = doc.splitTextToSize(pdfSafe(text), wide - 14);
+    lines.forEach((line, i) => {
+      room(13);
+      if (i === 0) doc.text("-", PT.margin, y);
+      doc.text(line, PT.margin + 14, y);
+      y += 13;
+    });
+  };
+
+  write(out.name, { size: 17, bold: true, gap: 5 });
+  if (out.contact) write(out.contact, { size: 9.5, gap: 4 });
+
+  if (out.summary) { section("Professional Summary"); write(out.summary, { gap: 3.5 }); }
+  if ((out.skills || []).length) { section("Skills"); write(out.skills.join("  |  "), { gap: 3.5 }); }
+
+  if ((out.experience || []).length) {
+    section("Experience");
+    out.experience.forEach((role) => {
+      room(34);
+      y += 4;
+      write(`${role.title}${role.employer ? " - " + role.employer : ""}`, { size: 10.5, bold: true, gap: 2.5 });
+      if (role.dates) write(role.dates, { size: 9, gap: 3.5 });
+      (role.bullets || []).forEach(bullet);
+    });
+  }
+  if ((out.education || []).length) {
+    section("Education");
+    out.education.forEach((e) =>
+      write([e.qualification, e.institution, e.dates].filter(Boolean).join(" - "), { gap: 3.5 }));
+  }
+  const certs = (out.certifications || []).filter(Boolean);
+  if (certs.length) { section("Certifications"); certs.forEach(bullet); }
+
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+/* One save path for both formats. Inside the Artifact sandbox a plain <a download> is
+   inert, which is what the downloads capability solves; on the public site there is no
+   capability and the blob works. */
+async function saveFile(filename, bytes, mime) {
+  const downloads = window.claude?.use ? await window.claude.use("downloads") : null;
+  if (downloads) { await downloads.save({ filename, data: bytes }); return; }
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+async function downloadCv(format) {
   if (!lastTailor) return;
-  const btn = $("dl");
+  const btn = $(format === "pdf" ? "dlpdf" : "dl");
+  const label = btn.textContent;
   btn.disabled = true; btn.textContent = "Building…";
   try {
-    const bytes = await buildDocx(lastTailor.out, lastTailor.job);
+    const { out, job } = lastTailor;
     const safe = (s) => String(s || "CV").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
-    const filename = `${safe(lastTailor.out.name)}_${safe(lastTailor.job.c)}_${safe(lastTailor.job.t)}.docx`;
-    const downloads = window.claude?.use ? await window.claude.use("downloads") : null;
-    if (downloads) {
-      await downloads.save({ filename, data: bytes });
+    const base = `${safe(out.name)}_${safe(job.c)}_${safe(job.t)}`;
+    if (format === "pdf") {
+      if (!window.jspdf) throw new Error("the PDF writer did not load");
+      await saveFile(`${base}.pdf`, buildPdf(out, job), "application/pdf");
     } else {
-      // Outside the Artifact sandbox an ordinary blob download works; inside it, it is
-      // inert, which is what the downloads capability exists to solve.
-      const url = URL.createObjectURL(new Blob([bytes], {
-        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      }));
-      const a = Object.assign(document.createElement("a"), { href: url, download: filename });
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      await saveFile(`${base}.docx`, await buildDocx(out, job), DOCX_MIME);
     }
     btn.textContent = "Saved";
   } catch (e) {
-    btn.textContent = e?.code === "cancelled" ? "Download cancelled" : "Could not save";
+    btn.textContent = e?.code === "cancelled" ? "Cancelled" : "Could not save";
   } finally {
-    setTimeout(() => { btn.disabled = false; btn.textContent = "Download .docx"; }, 2200);
+    setTimeout(() => { btn.disabled = false; btn.textContent = label; }, 2200);
   }
 }
 
