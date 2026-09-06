@@ -557,12 +557,35 @@ function wire() {
     state.page = 1; renderTargets(); render();
   });
   const addTarget = () => {
-    const v = $("addtgt").value.trim();
-    if (!v) return;
-    const known = DATA.companies.find((c) => c.toLowerCase() === v.toLowerCase());
-    state.targets.add(known || v);
-    saveTargets(); $("addtgt").value = ""; renderTargets(); render();
+    const typed = $("addtgt").value.trim();
+    if (!typed) return;
+    // Match on the canonical spelling however it was typed, so "swiggy" and "Swiggy" are
+    // one target rather than two.
+    const known = DATA.companies.find((c) => c.toLowerCase() === typed.toLowerCase());
+    const name = known || typed;
+
+    let message, kind = "note";
+    if (state.targets.has(name)) {
+      message = `Already targeting ${name}.`;
+    } else {
+      state.targets.add(name);
+      saveTargets();
+      const open = DATA.jobs.filter((j) => j.c === name).length;
+      if (open) { message = `Added ${name} — ${open} open ${open === 1 ? "role" : "roles"}.`; kind = "ok"; }
+      else message = `Added ${name}. Nothing open there today; it will appear here when something is.`;
+    }
+    $("addtgt").value = "";
+    // renderTargets rewrites the hint line, so the message has to be written after it.
+    renderTargets(); render();
+    tgtSay(message, kind);
   };
+
+  // pointerdown, not click. With the employer datalist open, the browser spends the first
+  // click dismissing its own autocomplete popup and the button never sees it — you type a
+  // company, press Add, and nothing happens. pointerdown fires before that dismissal.
+  // `click` stays for keyboard activation (Enter or Space on a focused button emits click
+  // with no pointer event); adding twice is harmless because the field is empty by then.
+  $("addbtn").addEventListener("pointerdown", (e) => { e.preventDefault(); addTarget(); });
   $("addbtn").addEventListener("click", addTarget);
   $("addtgt").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTarget(); } });
   $("reqbtn").addEventListener("click", requestCompany);
@@ -666,6 +689,16 @@ function clearCv() {
 }
 
 /* ---------- companies I'm targeting ---------- */
+/* Adding something and seeing nothing change is the failure people actually report, so
+   every add says what it did. The line clears itself so it never becomes furniture. */
+let tgtSayTimer = null;
+function tgtSay(message, kind) {
+  const hint = $("tgthint");
+  hint.innerHTML = kind === "ok" ? `<span class="ok">${esc(message)}</span>` : esc(message);
+  clearTimeout(tgtSayTimer);
+  tgtSayTimer = setTimeout(() => renderTargets(), 4000);
+}
+
 function renderTargets() {
   const counts = new Map();
   for (const j of DATA.jobs) counts.set(j.c, (counts.get(j.c) || 0) + 1);
