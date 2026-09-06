@@ -76,13 +76,21 @@ header.top{border-bottom:1px solid var(--line);background:var(--surface)}
 
 /* ---------- layout ---------- */
 .cols{display:grid;grid-template-columns:264px minmax(0,1fr);gap:30px;padding:24px 0 64px;align-items:start}
-@media (max-width:900px){.cols{grid-template-columns:1fr;gap:20px}}
-.rail{display:flex;flex-direction:column;gap:16px}
+@media (max-width:900px){.cols{grid-template-columns:1fr;gap:14px;padding:16px 0 48px}}
 
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px}
 .panel-h{padding:12px 14px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:8px}
-.panel-h h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.panel-h h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;flex:1}
 .panel-b{padding:14px}
+/* The rail panels are <details> so they can be shut on a phone, where 1,100px of controls
+   otherwise sits between the header and the first job. Open on desktop, closed on mobile;
+   set in JS, because CSS cannot toggle the open attribute. */
+summary.panel-h{cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent}
+summary.panel-h::-webkit-details-marker{display:none}
+details.panel:not([open]) summary.panel-h{border-bottom:0}
+.caret{color:var(--faint);font-size:11px;transition:transform .15s;flex:none}
+details.panel[open] .caret{transform:rotate(180deg)}
+@media (prefers-reduced-motion:reduce){.caret{transition:none}}
 
 label.f{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:0 0 5px;font-weight:600}
 .field{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:14px}
@@ -185,6 +193,36 @@ dialog::backdrop{background:rgba(10,16,19,.55)}
 .prev{border:1px solid var(--line);border-radius:8px;padding:13px 15px;background:var(--paper);font-size:13px;line-height:1.55;white-space:pre-wrap}
 footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--faint);font-size:12.5px}
 footer p{margin:0 0 6px;max-width:78ch}
+
+/* ---------- phones ---------- */
+@media (max-width:560px){
+  .wrap{padding:0 14px}
+  .brandrow{padding:18px 0 4px;gap:8px}
+  .brand{font-size:28px}
+  .tag{font-size:13px}
+  /* Two columns read as a set; three across at 375px cramps the labels. */
+  .stats{grid-template-columns:1fr 1fr;gap:12px 18px;padding:12px 0 14px}
+  .stat b{font-size:19px}
+  /* The score and the button get their own line so a long job title keeps full width. */
+  li.job{grid-template-columns:1fr;padding:13px 14px}
+  .jright{flex-direction:row;align-items:center;justify-content:flex-start;gap:14px;text-align:left;margin-top:9px}
+  .bar{width:70px}
+  .jt{font-size:15px}
+  /* Comfortable thumb targets. */
+  .chip{padding:8px 13px;font-size:13px}
+  /* The star is the main way to target a company on a phone, and inline text-sized glyphs
+     are the classic missed tap. Given a real box without disturbing the line it sits on. */
+  .star{display:inline-flex;align-items:center;justify-content:center;
+        min-width:34px;min-height:34px;margin:-8px -4px;font-size:17px;vertical-align:middle}
+  .btn{padding:11px 16px}
+  .btn.sm{padding:9px 13px}
+  dialog{width:100%;max-width:none;border-radius:12px 12px 0 0;margin:auto auto 0}
+  .db{max-height:70vh;padding:16px 16px}
+  .dh,.df{padding:14px 16px}
+  .df{flex-direction:column-reverse;align-items:stretch}
+  .df .btn,.df .note{width:100%;text-align:center;margin:0}
+}
+.rail{display:flex;flex-direction:column;gap:16px}
 </style>
 
 <header class="top">
@@ -200,8 +238,8 @@ footer p{margin:0 0 6px;max-width:78ch}
 <div class="wrap">
   <div class="cols">
     <aside class="rail">
-      <section class="panel">
-        <div class="panel-h"><h2>Match my CV</h2></div>
+      <details class="panel" data-collapse open>
+        <summary class="panel-h"><h2>Match my CV</h2><span class="caret" aria-hidden="true">&#9662;</span></summary>
         <div class="panel-b stack">
           <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload your CV">
             <b>Drop your CV here</b>
@@ -220,10 +258,10 @@ footer p{margin:0 0 6px;max-width:78ch}
           <div class="tracks" id="tracks"></div>
           <p class="note" id="privacy">Your CV is read in this browser and kept here. It goes to Claude only when you press a button, and it is never saved into this page for anyone else to see.</p>
         </div>
-      </section>
+      </details>
 
-      <section class="panel">
-        <div class="panel-h"><h2>Companies I&#8217;m targeting</h2><span class="num" id="tgtcount" style="font-size:12px;color:var(--muted)"></span></div>
+      <details class="panel" data-collapse open>
+        <summary class="panel-h"><h2>Companies I&#8217;m targeting</h2><span class="num" id="tgtcount" style="font-size:12px;color:var(--muted)"></span><span class="caret" aria-hidden="true">&#9662;</span></summary>
         <div class="panel-b stack">
           <div class="tracks" id="targets"></div>
           <div class="addrow">
@@ -243,10 +281,10 @@ footer p{margin:0 0 6px;max-width:78ch}
             </div>
           </details>
         </div>
-      </section>
+      </details>
 
-      <section class="panel">
-        <div class="panel-h"><h2>Filter</h2><button class="btn quiet sm" id="reset">Reset</button></div>
+      <details class="panel" data-collapse open>
+        <summary class="panel-h"><h2>Filter</h2><button class="btn quiet sm" id="reset">Reset</button><span class="caret" aria-hidden="true">&#9662;</span></summary>
         <div class="panel-b stack">
           <div><label class="f" for="q">Search title or company</label><input class="field" id="q" type="search" placeholder="e.g. account manager"></div>
           <div><label class="f" for="city">City</label><select class="field" id="city"></select></div>
@@ -265,7 +303,7 @@ footer p{margin:0 0 6px;max-width:78ch}
           </div>
           <div><label class="f" for="yrs">Max years of experience asked</label><select class="field" id="yrs"></select></div>
         </div>
-      </section>
+      </details>
     </aside>
 
     <main>
@@ -510,6 +548,18 @@ function wire() {
   chipGroup($("days"), "days");
   chipGroup($("mode"), "mode");
   $("more").addEventListener("click", () => { state.page++; render(); });
+  // The rail panels start open on a desktop and shut on a phone, where leaving them open
+  // buries the first job 1,500px down the page. Only re-applied when the breakpoint is
+  // actually crossed, so it never overrides a panel someone opened deliberately.
+  const wide = matchMedia("(min-width: 901px)");
+  const applyCollapse = () => {
+    document.querySelectorAll("details.panel[data-collapse]").forEach((d) => { d.open = wide.matches; });
+  };
+  applyCollapse();
+  wide.addEventListener("change", applyCollapse);
+
+  // Reset lives inside a <summary>, where any click would otherwise toggle the panel shut.
+  $("reset").addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
   $("reset").addEventListener("click", () => {
     Object.assign(state, { q: "", city: "", company: "", mode: "", days: 0, yrs: 0, page: 1, onlyTargets: false });
     $("q").value = ""; $("city").value = ""; $("company").value = ""; $("yrs").value = "";
