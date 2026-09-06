@@ -1,4 +1,6 @@
-Kaam Direct — India job listings read straight from employers own careers systems.
+Find My Job — India job listings read straight from employers own careers systems.
 
-This repo holds one generated file, index.html, served by GitHub Pages.
-It is built by C:/dev/jobseek-mcp/scripts/build_web.py — do not edit it here.
+Live at https://kunalsharma100103-arch.github.io/findmyjob/
+
+This repo holds one generated file, index.html. It is built by
+C:/dev/jobseek-mcp/scripts/build_web.py from a daily harvest — do not edit it here.
