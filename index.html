@@ -115,6 +115,7 @@ ol.jobs{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-r
 li.job{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 18px;padding:14px 16px;border-bottom:1px solid var(--line-soft)}
 li.job:last-child{border-bottom:0}
 li.job:hover{background:var(--raised)}
+li.job.dimmed{opacity:.5}
 .jt{font-size:15.5px;font-weight:600;letter-spacing:-.005em;margin:0}
 .jt a{color:inherit;text-decoration:none}
 .jt a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
@@ -302,6 +303,15 @@ footer p{margin:0 0 6px;max-width:78ch}
             <div class="chipset" id="only"></div>
           </div>
           <div><label class="f" for="yrs">Max years of experience asked</label><select class="field" id="yrs"></select></div>
+          <div>
+            <label class="f">Hide kinds of role</label>
+            <div class="chipset" id="killpresets"></div>
+          </div>
+          <div>
+            <label class="f" for="kill">Hide titles containing</label>
+            <input class="field" id="kill" type="search" placeholder="e.g. sales, quota, night shift">
+            <p class="note" style="margin-top:6px">Comma-separated, matched against the job title as whole words. Kept in this browser.</p>
+          </div>
         </div>
       </details>
     </aside>
@@ -360,10 +370,77 @@ const claudeLink = (label) =>
 const MATCHERS = DATA.patterns.map((p) => { try { return new RegExp(p, "i"); } catch { return null; } });
 const MAXW = Math.max(...DATA.weights);
 
+/* ---------- hiding roles you never want to see ---------- */
+/* Matching is on the title alone, deliberately. The skill tags come from loose regexes run
+   over the whole description - a product role that merely mentions "sales pipeline" carries
+   the sales tag - so excluding on those removes far more than anyone means. The title is
+   what the person is actually being hired as, and it is the only field where "hide anything
+   called X" behaves the way it reads. It also sidesteps the company name, which matters
+   more than it looks: Target is an employer on this page, and matching names would delete
+   every engineer they post the moment someone excludes "target". */
+const HIDE_KEY = "kd.hide";
+const HIDE_PRESETS = [
+  /* "target", "revenue" and "selling" were in this list and have been taken out, each for
+     the same reason: measured against the real export they hit almost nothing they were
+     meant to. "target" matched 10 titles and every one belonged to Target, the employer,
+     whose India roles carry the company name ("Sr Engineer - Target India"). "revenue"
+     matched finance and platform work - "Staff Engineer, Revenue & Finance Automation".
+     "selling" matched Amazon's Selling Partner org, which is largely SDEs. A quota-carrying
+     role names itself in other ways, and the terms below are the ones that hold up. */
+  ["sales", "Sales &amp; targets",
+   ["sales", "quota", "account executive", "account manager", "key account",
+    "business development", "territory", "relationship manager", "presales", "pre-sales",
+    "client partner"]],
+  ["support", "Support &amp; call centre",
+   ["support", "helpdesk", "help desk", "service desk", "call center", "call centre",
+    "voice process", "customer service"]],
+  ["intern", "Interns &amp; trainees",
+   ["intern", "internship", "trainee", "apprentice", "fresher", "graduate program",
+    "graduate programme"]],
+];
+
+function loadHide() {
+  try {
+    const o = JSON.parse(localStorage.getItem(HIDE_KEY) || "{}");
+    return {
+      terms: Array.isArray(o.terms) ? o.terms : [],
+      presets: new Set(Array.isArray(o.presets) ? o.presets : []),
+      jobs: new Set(Array.isArray(o.jobs) ? o.jobs : []),
+    };
+  } catch { return { terms: [], presets: new Set(), jobs: new Set() }; }
+}
+function saveHide() {
+  try {
+    localStorage.setItem(HIDE_KEY, JSON.stringify({
+      terms: state.hideTerms, presets: [...state.hidePresets], jobs: [...state.hidden],
+    }));
+  } catch { /* private window or blocked site data: the filter still holds for this session */ }
+}
+const HIDE0 = loadHide();
+
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/* One regex for every term. \b only fires beside a word character, so gluing boundaries on
+   blindly would leave a term like "c++" unable to match anything - they go on the ends that
+   have one and nowhere else. */
+function buildHideRe() {
+  const terms = new Set();
+  for (const [key, , words] of HIDE_PRESETS) {
+    if (state.hidePresets.has(key)) for (const w of words) terms.add(w);
+  }
+  for (const w of state.hideTerms) terms.add(w);
+  if (!terms.size) { state.hideRe = null; return; }
+  const parts = [...terms].map((w) =>
+    (/^\w/.test(w) ? "\\b" : "") + reEsc(w) + (/\w$/.test(w) ? "\\b" : ""));
+  try { state.hideRe = new RegExp(parts.join("|"), "i"); } catch { state.hideRe = null; }
+}
+const isHidden = (job) => state.hidden.has(job.u) || !!(state.hideRe && state.hideRe.test(job.t));
+
 const state = {
   q: "", city: "", company: "", mode: "", days: 0, yrs: 0, onlyTargets: false,
   sort: "date", page: 1, cvSkills: null, tracks: [], scores: null,
   targets: new Set(JSON.parse(localStorage.getItem("kd.targets") || "[]")),
+  hideTerms: HIDE0.terms, hidePresets: HIDE0.presets, hidden: HIDE0.jobs,
+  hideRe: null, showHidden: false, excluded: 0,
 };
 const PAGE = 40;
 
@@ -421,6 +498,15 @@ function filtered() {
     if (state.onlyTargets && !state.targets.has(j.c)) return false;
     return true;
   });
+  // Counted, not merely dropped: a filter that silently removes 800 roles is one you forget
+  // you set. The tally in the results bar is how you find your way back out of it.
+  let excluded = 0;
+  rows = rows.filter((j) => {
+    if (!isHidden(j)) return true;
+    excluded++;
+    return state.showHidden;
+  });
+  state.excluded = excluded;
   if (state.sort === "match" && state.cvSkills) {
     rows.sort((a, b) => scoreOf(b) - scoreOf(a) || (b.d || "").localeCompare(a.d || ""));
   } else {
@@ -468,7 +554,8 @@ function jobRow(job, i) {
       ${graded.evidence ? `<br><b>Your evidence:</b> ${esc(graded.evidence)}` : ""}
     </div>` : "";
 
-  return `<li class="job" data-i="${i}">
+  const off = isHidden(job);
+  return `<li class="job${off ? " dimmed" : ""}" data-i="${i}">
     <div>
       <h3 class="jt"><a href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">${esc(job.t)}</a></h3>
       <div class="jmeta">${bits.join("")}</div>
@@ -477,6 +564,7 @@ function jobRow(job, i) {
     <div class="jright">
       ${right}
       <button class="btn ghost sm tailor" data-u="${esc(job.u)}">Tailor CV</button>
+      <button class="btn quiet sm hidejob" data-u="${esc(job.u)}">${state.hidden.has(job.u) ? "Unhide" : "Hide"}</button>
     </div>
     ${rat}
   </li>`;
@@ -490,7 +578,15 @@ function render() {
   $("list").innerHTML = shown.length
     ? shown.map(jobRow).join("")
     : `<div class="empty"><h3>Nothing matches those filters</h3><p>Try widening the date range, or clearing the employer.</p></div>`;
-  $("count").innerHTML = `<strong>${rows.length.toLocaleString("en-IN")}</strong> ${rows.length === 1 ? "role" : "roles"}${state.cvSkills ? " · ranked against your CV" : ""}`;
+  // With `showHidden` on the hidden rows sit in `rows` greyed out, so the headline counts
+  // what is actually on offer either way.
+  const live = rows.length - (state.showHidden ? state.excluded : 0);
+  const back = state.excluded
+    ? ` · <span class="num">${state.excluded.toLocaleString("en-IN")}</span> hidden ` +
+      `<button class="linkish" data-act="show">${state.showHidden ? "stop showing" : "show"}</button>` +
+      (state.hidden.size ? ` <button class="linkish" data-act="restore">restore ${state.hidden.size}</button>` : "")
+    : "";
+  $("count").innerHTML = `<strong>${live.toLocaleString("en-IN")}</strong> ${live === 1 ? "role" : "roles"}${state.cvSkills ? " · ranked against your CV" : ""}${back}`;
   $("more").hidden = shown.length >= rows.length;
   $("more").textContent = `Show more (${(rows.length - shown.length).toLocaleString("en-IN")} left)`;
 }
@@ -523,6 +619,10 @@ function boot() {
   $("mode").innerHTML = [["", "Any"], ["remote", "Remote"], ["hybrid", "Hybrid"], ["onsite", "On-site"]]
     .map(([v, l]) => `<button class="chip" data-v="${v}" aria-pressed="${v === ""}">${l}</button>`).join("");
   $("employers").innerHTML = DATA.companies.map((c) => `<option value="${esc(c)}"></option>`).join("");
+  $("killpresets").innerHTML = HIDE_PRESETS
+    .map(([k, label]) => `<button class="chip" data-v="${k}" aria-pressed="${state.hidePresets.has(k)}">${label}</button>`).join("");
+  $("kill").value = state.hideTerms.join(", ");
+  buildHideRe();
 
   wire();
   renderTargets();
@@ -547,6 +647,28 @@ function wire() {
   $("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.page = 1; render(); });
   chipGroup($("days"), "days");
   chipGroup($("mode"), "mode");
+  // Not chipGroup: these are independent toggles, not one-of-many.
+  $("killpresets").addEventListener("click", (e) => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    const k = b.dataset.v;
+    if (state.hidePresets.has(k)) state.hidePresets.delete(k); else state.hidePresets.add(k);
+    b.setAttribute("aria-pressed", String(state.hidePresets.has(k)));
+    buildHideRe(); saveHide(); state.page = 1; render();
+  });
+  let kt;
+  $("kill").addEventListener("input", (e) => {
+    clearTimeout(kt);
+    kt = setTimeout(() => {
+      state.hideTerms = e.target.value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+      buildHideRe(); saveHide(); state.page = 1; render();
+    }, 200);
+  });
+  $("count").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-act]"); if (!b) return;
+    if (b.dataset.act === "show") state.showHidden = !state.showHidden;
+    else { state.hidden.clear(); saveHide(); }
+    state.page = 1; render();
+  });
   $("more").addEventListener("click", () => { state.page++; render(); });
   // The rail panels start open on a desktop and shut on a phone, where leaving them open
   // buries the first job 1,500px down the page. Only re-applied when the breakpoint is
@@ -572,6 +694,12 @@ function wire() {
   $("list").addEventListener("click", (e) => {
     const star = e.target.closest(".star");
     if (star && star.dataset.co) { toggleTarget(star.dataset.co); return; }
+    const off = e.target.closest(".hidejob");
+    if (off && off.dataset.u) {
+      const u = off.dataset.u;
+      if (state.hidden.has(u)) state.hidden.delete(u); else state.hidden.add(u);
+      saveHide(); render(); return;
+    }
     const b = e.target.closest(".tailor"); if (!b) return;
     const job = DATA.jobs.find((j) => j.u === b.dataset.u);
     if (job) tailor(job);
