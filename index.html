@@ -445,7 +445,7 @@ const state = {
   sort: "date", page: 1, cvSkills: null, tracks: [], scores: null,
   targets: new Set(JSON.parse(localStorage.getItem("kd.targets") || "[]")),
   hideTerms: HIDE0.terms, hidePresets: HIDE0.presets, hidden: HIDE0.jobs,
-  hideRe: null, showHidden: false, excluded: 0,
+  hideRe: null, showHidden: false, excluded: 0, cvTotal: 0,
 };
 const PAGE = 40;
 
@@ -475,19 +475,34 @@ function fingerprint(text) {
   MATCHERS.forEach((re, i) => { if (re && re.test(text)) found.add(i); });
   return found;
 }
-/* Coverage alone is not a ranking. A posting tagged with one ubiquitous skill scores a
-   perfect 1.0 because the CV covers all of its (tiny) weight - "Production & Assembly
-   Representative" outranked every operations role on exactly that. So coverage is damped
-   by how much matched weight there actually is: a role has to agree with the CV on a
-   decent amount of evidence, not merely on everything it happens to mention. EVIDENCE is
-   roughly the matched weight at which a job is taken half-seriously. */
-const EVIDENCE = 6;
-function localScore(job, cvSkills) {
+/* Cosine similarity between the posting's skill weights and the CV's.
+
+   Coverage of the posting alone is not a ranking, and damping it by matched weight was not
+   enough either: a job tagged with a handful of skills is trivially easy to cover, so
+   "SFMC Email Developer" and "Service Delivery Manager" outranked every real product role
+   for a product manager's CV. Dividing by the geometric mean of the two sides means a
+   posting has to account for a real share of the CV's substance as well as having its own
+   demands met - a thin posting has little weight to offer and stops winning on cheapness.
+
+   This is also what the paid grading pass eats: it only ever sees the top 24 of this
+   ranking, so a prefilter full of near-misses spends the whole budget on them, and the
+   grader honestly returns a wall of fifties. Measured on the live board, this puts
+   Director of Product Management and Senior PM at the top of a PM CV where the old score
+   had an email developer, and widens the backend spread from 62/11 to 73/20 (max/median). */
+function cvWeight(cvSkills) {
+  let total = 0;
+  for (const i of cvSkills) total += DATA.weights[i] || 0;
+  return total;
+}
+function localScore(job, cvSkills, cvTotal) {
   if (!job.k.length) return 0;
   let total = 0, hit = 0;
   for (const i of job.k) { const w = DATA.weights[i]; total += w; if (cvSkills.has(i)) hit += w; }
   if (!total || !hit) return 0;
-  return (hit / total) * (hit / (hit + EVIDENCE));
+  // Callers in a loop pass cvTotal in; it is the same for every job and worth not redoing.
+  const cvW = cvTotal || cvWeight(cvSkills);
+  if (!cvW) return 0;
+  return hit / Math.sqrt(total * cvW);
 }
 
 /* ---------- filtering ---------- */
@@ -513,6 +528,7 @@ function filtered() {
   });
   state.excluded = excluded;
   if (state.sort === "match" && state.cvSkills) {
+    state.cvTotal = cvWeight(state.cvSkills);
     rows.sort((a, b) => scoreOf(b) - scoreOf(a) || (b.d || "").localeCompare(a.d || ""));
   } else {
     rows.sort((a, b) => (b.d || "").localeCompare(a.d || ""));
@@ -522,7 +538,7 @@ function filtered() {
 function scoreOf(job) {
   const graded = state.scores && state.scores.get(job.u);
   if (graded) return 0.6 + graded.score / 250;      // a graded job always outranks an ungraded one
-  return state.cvSkills ? localScore(job, state.cvSkills) * 0.6 : 0;
+  return state.cvSkills ? localScore(job, state.cvSkills, state.cvTotal) * 0.6 : 0;
 }
 
 /* ---------- rendering ---------- */
@@ -540,7 +556,7 @@ function jobRow(job, i) {
     right = `<div class="score ${cls}">${graded.score}<small>match</small></div>
              <div class="bar ${cls}"><i style="width:${graded.score}%"></i></div>`;
   } else if (state.cvSkills) {
-    const pct = Math.round(localScore(job, state.cvSkills) * 100);
+    const pct = Math.round(localScore(job, state.cvSkills, state.cvTotal) * 100);
     right = `<div class="score s-lo">${pct}<small>skills</small></div>
              <div class="bar s-lo"><i style="width:${pct}%"></i></div>`;
   }
@@ -1006,6 +1022,7 @@ async function runMatch() {
 
   // Stage one is free and instant: fingerprint the CV and rank everything locally.
   state.cvSkills = fingerprint(cv);
+  state.cvTotal = cvWeight(state.cvSkills);
   state.scores = null;
   state.sort = "match";
   $("sort").innerHTML = `<option value="match">Best match</option><option value="date">Newest first</option>`;
@@ -1039,7 +1056,7 @@ ${cv.slice(0, 9000)}` }], { modelTier: "default" });
 
     // Stage two is paid, so it only sees the top of the local ranking.
     const top = DATA.jobs
-      .map((j) => ({ j, s: localScore(j, state.cvSkills) }))
+      .map((j) => ({ j, s: localScore(j, state.cvSkills, state.cvTotal) }))
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s || (b.j.d || "").localeCompare(a.j.d || ""))
       .slice(0, 24).map((x) => x.j);
