@@ -362,8 +362,13 @@ const $ = (id) => document.getElementById(id);
    viewer. Capabilities can still be declined per call, which the call sites handle. */
 const CLAUDE_URL = "https://claude.ai/code/artifact/68f5d1af-4511-4c1f-82d6-f6d4a5e949a5";
 const IN_CLAUDE = !!(window.claude && window.claude.use);
-const claudeLink = (label) =>
-  `<a href="${CLAUDE_URL}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+const claudeLink = (label, job) =>
+  `<a href="${claudeHref(job)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+
+/* The posting travels in the fragment, which never leaves the browser, so handing someone
+   to the Claude version does not also hand them 11,000 roles to search through again. */
+const claudeHref = (job) =>
+  job ? `${CLAUDE_URL}#job=${encodeURIComponent(job.u)}` : CLAUDE_URL;
 
 /* Build the skill matchers once. These are the same patterns the exporter used on the
    job descriptions, so a CV and a posting are fingerprinted against one vocabulary. */
@@ -627,6 +632,29 @@ function boot() {
   wire();
   renderTargets();
   render();
+  openRequestedJob();
+}
+
+/* Arriving from the public site's "Tailor CV" with a posting in the fragment: show it and
+   open its dialog. Silent when the fragment is absent, or names a job that has since
+   closed - a stale link should land on the listing, not on an error. */
+function openRequestedJob() {
+  const match = /(?:^|[#&])job=([^&]+)/.exec(location.hash || "");
+  if (!match) return;
+  let wanted;
+  try { wanted = decodeURIComponent(match[1]); } catch { return; }
+  const job = DATA.jobs.find((j) => j.u === wanted);
+  if (!job) {
+    say("That posting has closed since the link was made. Everything else is here.");
+    return;
+  }
+  // Put it on screen as well as in the dialog, so closing the dialog leaves them
+  // somewhere sensible rather than back at the top of 11,000 rows.
+  state.q = job.t;
+  $("q").value = job.t;
+  state.page = 1;
+  render();
+  tailor(job);
 }
 
 function chipGroup(el, key) {
@@ -1075,7 +1103,9 @@ async function tailor(job) {
       <p>It rewrites your CV for this exact posting — reordered for what the role asks for,
       with a coverage report and an honest list of what you lack — and hands back an
       ATS-safe Word file. That needs Claude, so it lives in the
-      ${claudeLink("Claude version of this page")}.</p>
+      ${claudeLink("Claude version of this page", job)}, which will open on this posting.</p>
+      <p style="margin-top:10px" class="note">Your CV stays in this browser and does not
+      travel with the link - paste it again there, once.</p>
       <p style="margin-top:10px">Everything else here works as it is: the listing, the
       filters, your target companies, and ranking your CV against all
       ${DATA.count.toLocaleString("en-IN")} roles.</p></div>`;
