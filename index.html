@@ -1084,38 +1084,11 @@ ${top.map((j, i) => `${i}. ${j.t} — ${j.c}${j.l ? ", " + j.l : ""}${j.y ? ` ($
 /* ---------- tailoring ---------- */
 let lastTailor = null;
 
-async function tailor(job) {
-  const cv = $("cv").value.trim();
-  const dlg = $("dlg");
-  $("dt").textContent = job.t;
-  $("dsub").textContent = `${job.c}${job.l ? " · " + job.l : ""}`;
-  $("dfoot").innerHTML = `<a class="btn ghost" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`;
-  dlg.showModal();
-
-  if (cv.length < 120) {
-    $("dbody").innerHTML = `<div class="empty"><h3>Paste your CV first</h3><p>Add your CV in the panel on the left, then come back and I will rewrite it for this posting.</p></div>`;
-    return;
-  }
-  const sample = await getSample();
-  if (!sample) {
-    $("dbody").innerHTML = `<div class="empty">
-      <h3>CV tailoring runs in the Claude version</h3>
-      <p>It rewrites your CV for this exact posting — reordered for what the role asks for,
-      with a coverage report and an honest list of what you lack — and hands back an
-      ATS-safe Word file. That needs Claude, so it lives in the
-      ${claudeLink("Claude version of this page", job)}, which will open on this posting.</p>
-      <p style="margin-top:10px" class="note">Your CV stays in this browser and does not
-      travel with the link - paste it again there, once.</p>
-      <p style="margin-top:10px">Everything else here works as it is: the listing, the
-      filters, your target companies, and ranking your CV against all
-      ${DATA.count.toLocaleString("en-IN")} roles.</p></div>`;
-    return;
-  }
-
-  $("dbody").innerHTML = `<div class="status"><span class="spin"></span><span>Rewriting your CV for this posting…</span></div>`;
-  try {
-    const out = await sample.json([{ role: "user", content:
-`Rewrite this candidate's CV for the specific job below. Return an ATS-safe CV.
+/* The whole instruction, in one place. The Claude version sends it; the public site hands
+   it over to be pasted somewhere else. Anything that improves it improves both. */
+function tailorPrompt(cv, job) {
+  const skills = job.k.map((k) => DATA.vocab[k]).join(", ");
+  return `Rewrite this candidate's CV for the specific job below. Return an ATS-safe CV.
 
 HARD RULES — these are not style preferences:
 - NEVER invent anything. No employer, date, metric, tool or certification that is not already in the CV.
@@ -1139,17 +1112,76 @@ JOB
 Title: ${job.t}
 Employer: ${job.c}
 Location: ${job.l || "India"}
+Posting: ${job.u}
 ${job.y ? `Experience asked for: ${job.y}+ years` : ""}
-Skills named in the posting: ${job.k.map((k) => DATA.vocab[k]).join(", ")}
+Skills named in the posting: ${skills}
 
 CV
-${cv.slice(0, 12000)}` }], { modelTier: "complex" });
+${cv.slice(0, 12000)}`;
+}
+
+async function tailor(job) {
+  const cv = $("cv").value.trim();
+  const dlg = $("dlg");
+  $("dt").textContent = job.t;
+  $("dsub").textContent = `${job.c}${job.l ? " · " + job.l : ""}`;
+  $("dfoot").innerHTML = `<a class="btn ghost" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`;
+  dlg.showModal();
+
+  if (cv.length < 120) {
+    $("dbody").innerHTML = `<div class="empty"><h3>Paste your CV first</h3><p>Add your CV in the panel on the left, then come back and I will rewrite it for this posting.</p></div>`;
+    return;
+  }
+  const sample = await getSample();
+  if (!sample) {
+    showPromptFallback(cv, job);
+    return;
+  }
+
+  $("dbody").innerHTML = `<div class="status"><span class="spin"></span><span>Rewriting your CV for this posting…</span></div>`;
+  try {
+    const out = await sample.json(
+      [{ role: "user", content: tailorPrompt(cv, job) }], { modelTier: "complex" });
 
     lastTailor = { out, job };
     renderTailor(out, job);
   } catch (e) {
     $("dbody").innerHTML = `<div class="err">${esc(e?.code === "not_granted" ? "Claude access was declined, so nothing was generated." : `Could not tailor the CV: ${e?.message || e}`)}</div>`;
   }
+}
+
+/* No Claude here, so hand over the work rather than the disappointment: the same prompt
+   the Claude version would have sent, ready to paste into any assistant. */
+function showPromptFallback(cv, job) {
+  const prompt = tailorPrompt(cv, job);
+  $("dbody").innerHTML = `
+    <div class="sec">
+      <h4>Your prompt for this posting</h4>
+      <p class="note" style="margin-bottom:10px">This page cannot run Claude, but the work
+      is the prompt. Copy it into Claude, or any assistant, and you get the same rewrite —
+      reordered for this role, with a coverage report and an honest list of gaps. Your CV
+      and this posting are already in it.</p>
+      <textarea class="cv" id="promptbox" readonly style="min-height:260px;font-family:var(--mono);font-size:12.5px">${esc(prompt)}</textarea>
+    </div>`;
+  $("dfoot").innerHTML = `
+    <span class="note" style="margin-right:auto;align-self:center" id="copystate"></span>
+    <a class="btn quiet" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>
+    <a class="btn quiet" href="${claudeHref(job)}" target="_blank" rel="noopener noreferrer">Claude version</a>
+    <button class="btn" id="copyprompt">Copy prompt</button>`;
+
+  $("copyprompt").addEventListener("click", async () => {
+    const note = $("copystate");
+    try {
+      await navigator.clipboard.writeText(prompt);
+      note.textContent = "Copied. Paste it into Claude.";
+    } catch {
+      // Clipboard access is refused in plenty of ordinary situations - an insecure
+      // origin, a permission prompt declined. Selecting the text still works.
+      const box = $("promptbox");
+      box.focus(); box.select();
+      note.textContent = "Select-all is done — press Ctrl+C.";
+    }
+  });
 }
 
 function renderTailor(out, job) {
