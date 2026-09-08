@@ -567,6 +567,9 @@ function jobRow(job, i) {
   const bits = [`<span class="co">${esc(job.c)}<button class="star" data-co="${esc(job.c)}" aria-pressed="${starred}" title="${starred ? "Remove from" : "Add to"} the companies you are targeting">${starred ? "&#9733;" : "&#9734;"}</button></span>`];
   if (job.l) bits.push(`<span>${esc(job.l)}</span>`);
   if (job.r) bits.push(`<span>${esc(job.r)}</span>`);
+  // Exported for every posting and, until now, read by nothing. "Not Applicable" is what
+  // a board writes when the field was left blank, so it says less than showing nothing.
+  if (job.s && job.s.toLowerCase() !== "not applicable") bits.push(`<span>${esc(job.s)}</span>`);
   if (job.y) bits.push(`<span class="num">${job.y}+ yrs</span>`);
   bits.push(`<span class="num">${job.e ? "posted " : ""}${ago(job.d, job.e)}</span>`);
 
@@ -916,8 +919,8 @@ function clearCv() {
   $("cv").value = ""; $("cv").hidden = true;
   $("loaded").hidden = true; $("drop").hidden = false;
   $("tracks").innerHTML = "";
-  state.cvSkills = null; state.scores = null; state.tracks = [];
-  state.sort = "date";
+  state.cvSkills = null; state.cvTotal = 0; state.scores = null; state.tracks = [];
+  state.sort = "date"; state.page = 1;
   $("sort").innerHTML = `<option value="date">Newest first</option>`;
   say(""); render();
 }
