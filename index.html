@@ -1285,7 +1285,13 @@ function renderTailor(out, job) {
    rules are all formatting decisions: one column, no tables, no header block, standard
    headings, real numbered list items rather than dash characters. Hand-building the XML
    is what makes those guarantees rather than hoping a library's defaults match. */
-const X = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+/* XML 1.0 forbids most control characters outright - they cannot be escaped, only
+   removed, and one of them anywhere in the document makes Word call the file corrupt.
+   PDF text extraction produces them routinely (form feeds between pages, vertical tabs
+   inside a table), and that text reaches here through the CV. Tab, newline and carriage
+   return are the three that are legal. */
+const XML_ILLEGAL = /[ --￾￿]/g;
+const X = (s) => String(s ?? "").replace(XML_ILLEGAL, "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 function para(text, opts = {}) {
   const { bold, size = 21, heading, bullet, space = 60 } = opts;
