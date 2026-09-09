@@ -383,6 +383,26 @@ const MAXW = Math.max(...DATA.weights);
    called X" behaves the way it reads. It also sidesteps the company name, which matters
    more than it looks: Target is an employer on this page, and matching names would delete
    every engineer they post the moment someone excludes "target". */
+/* Storage is a convenience here, never a dependency: every reader of these values has a
+   sensible answer without them. The accessor itself can throw - not just its call - where
+   site data is blocked, so even reading is wrapped. */
+const store = {
+  get(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch { return false; }
+  },
+  drop(key) {
+    try { localStorage.removeItem(key); } catch { /* nothing to undo */ }
+  },
+  json(key, fallback) {
+    const raw = store.get(key);
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch { return fallback; }
+  },
+};
+
 const HIDE_KEY = "kd.hide";
 const HIDE_PRESETS = [
   /* "target", "revenue" and "selling" were in this list and have been taken out, each for
@@ -406,7 +426,7 @@ const HIDE_PRESETS = [
 
 function loadHide() {
   try {
-    const o = JSON.parse(localStorage.getItem(HIDE_KEY) || "{}");
+    const o = store.json(HIDE_KEY, {}) || {};
     return {
       terms: Array.isArray(o.terms) ? o.terms : [],
       presets: new Set(Array.isArray(o.presets) ? o.presets : []),
@@ -416,7 +436,7 @@ function loadHide() {
 }
 function saveHide() {
   try {
-    localStorage.setItem(HIDE_KEY, JSON.stringify({
+    store.set(HIDE_KEY, JSON.stringify({
       terms: state.hideTerms, presets: [...state.hidePresets], jobs: [...state.hidden],
     }));
   } catch { /* private window or blocked site data: the filter still holds for this session */ }
@@ -443,13 +463,14 @@ const isHidden = (job) => state.hidden.has(job.u) || !!(state.hideRe && state.hi
 const state = {
   q: "", city: "", company: "", mode: "", days: 0, yrs: 0, onlyTargets: false,
   sort: "date", page: 1, cvSkills: null, tracks: [], scores: null,
-  targets: new Set(JSON.parse(localStorage.getItem("kd.targets") || "[]")),
+  // Bare, this threw out of the initialiser and took the whole page with it.
+  targets: new Set(store.json("kd.targets", []) || []),
   hideTerms: HIDE0.terms, hidePresets: HIDE0.presets, hidden: HIDE0.jobs,
   hideRe: null, showHidden: false, excluded: 0, cvTotal: 0,
 };
 const PAGE = 40;
 
-const saveTargets = () => localStorage.setItem("kd.targets", JSON.stringify([...state.targets]));
+const saveTargets = () => store.set("kd.targets", JSON.stringify([...state.targets]));
 
 /* ---------- helpers ---------- */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -827,10 +848,10 @@ function wire() {
   $("addtgt").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTarget(); } });
   $("reqbtn").addEventListener("click", requestCompany);
 
-  const saved = localStorage.getItem(CV_KEY);
+  const saved = store.get(CV_KEY);
   if (saved) {
     $("cv").value = saved;
-    showLoaded(localStorage.getItem(CV_NAME) || "Your saved CV", saved);
+    showLoaded(store.get(CV_NAME) || "Your saved CV", saved);
   }
 }
 
@@ -897,10 +918,12 @@ async function loadCvFile(file) {
       throw new Error("almost no text came out — if it is a scanned PDF, paste the text instead");
     }
     $("cv").value = text;
-    localStorage.setItem(CV_KEY, text);
-    localStorage.setItem(CV_NAME, name);
+    // Deliberately after the textarea is filled and outside the read's failure path: a
+    // CV too large for the quota is still a CV that was read, and reporting a read error
+    // for it would be a lie that also leaves the panel half-open.
+    const remembered = store.set(CV_KEY, text) && store.set(CV_NAME, name);
     showLoaded(name, text);
-    say("");
+    say(remembered ? "" : "Loaded. This browser will not keep it for next time.");
   } catch (e) {
     fail(`Could not read that file: ${e.message || e}`);
   }
@@ -915,7 +938,7 @@ function showLoaded(name, text) {
 }
 
 function clearCv() {
-  localStorage.removeItem(CV_KEY); localStorage.removeItem(CV_NAME);
+  store.drop(CV_KEY); store.drop(CV_NAME);
   $("cv").value = ""; $("cv").hidden = true;
   $("loaded").hidden = true; $("drop").hidden = false;
   $("tracks").innerHTML = "";
@@ -1021,7 +1044,7 @@ function fail(msg) { $("status").innerHTML = `<div class="err">${esc(msg)}</div>
 async function runMatch() {
   const cv = $("cv").value.trim();
   if (cv.length < 120) { fail("Add a bit more of your CV — a couple of roles with their bullets is enough."); return; }
-  localStorage.setItem(CV_KEY, cv);
+  store.set(CV_KEY, cv);
 
   // Stage one is free and instant: fingerprint the CV and rank everything locally.
   state.cvSkills = fingerprint(cv);
