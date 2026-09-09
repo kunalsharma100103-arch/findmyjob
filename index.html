@@ -473,6 +473,25 @@ const PAGE = 40;
 const saveTargets = () => store.set("kd.targets", JSON.stringify([...state.targets]));
 
 /* ---------- helpers ---------- */
+/* esc() makes a value safe to place in an attribute; it does not make a URL safe to
+   follow. `javascript:alert(1)` escapes to itself and is then a live script link. Apply
+   URLs come from third parties, so the scheme is checked rather than assumed. */
+const safeUrl = (u) => {
+  const raw = String(u ?? "").trim();
+  if (!raw) return null;
+  try {
+    // Parsed, not pattern-matched: "java\tscript:" and "JaVaScRiPt:" are the same link to a
+    // browser and different strings to a regex.
+    // No base URL, on purpose. With one, "/relative/path" resolves against *this* page and
+    // becomes a link to nowhere, and "//evil.com/x" silently inherits our scheme and goes
+    // off-site. An apply URL that is not absolute is not usable.
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+};
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const today = new Date(DATA.generated_at + "T00:00:00Z");
 
@@ -600,9 +619,14 @@ function jobRow(job, i) {
     </div>` : "";
 
   const off = isHidden(job);
+  // A posting whose link is not http(s) is still worth listing; it just is not a link.
+  const link = safeUrl(job.u);
+  const title = link
+    ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(job.t)}</a>`
+    : `${esc(job.t)} <span class="note">(no usable apply link)</span>`;
   return `<li class="job${off ? " dimmed" : ""}" data-i="${i}">
     <div>
-      <h3 class="jt"><a href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">${esc(job.t)}</a></h3>
+      <h3 class="jt">${title}</h3>
       <div class="jmeta">${bits.join("")}</div>
       <div class="skills">${chips}</div>
     </div>
@@ -1168,7 +1192,10 @@ async function tailor(job) {
   const dlg = $("dlg");
   $("dt").textContent = job.t;
   $("dsub").textContent = `${job.c}${job.l ? " · " + job.l : ""}`;
-  $("dfoot").innerHTML = `<a class="btn ghost" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`;
+  const posting = safeUrl(job.u);
+  $("dfoot").innerHTML = posting
+    ? `<a class="btn ghost" href="${esc(posting)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`
+    : `<span class="note">This posting has no usable link.</span>`;
   dlg.showModal();
 
   if (cv.length < 120) {
@@ -1208,7 +1235,7 @@ function showPromptFallback(cv, job) {
     </div>`;
   $("dfoot").innerHTML = `
     <span class="note" style="margin-right:auto;align-self:center" id="copystate"></span>
-    <a class="btn quiet" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>
+    ${safeUrl(job.u) ? `<a class="btn quiet" href="${esc(safeUrl(job.u))}" target="_blank" rel="noopener noreferrer">Open the posting</a>` : ""}
     <a class="btn quiet" href="${claudeHref(job)}" target="_blank" rel="noopener noreferrer">Claude version</a>
     <button class="btn" id="copyprompt">Copy prompt</button>`;
 
