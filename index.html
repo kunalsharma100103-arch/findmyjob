@@ -468,6 +468,10 @@ const state = {
   targets: new Set(store.json("kd.targets", []) || []),
   hideTerms: HIDE0.terms, hidePresets: HIDE0.presets, hidden: HIDE0.jobs,
   hideRe: null, showHidden: false, excluded: 0, cvTotal: 0,
+  /* Posting text the reader pasted in, keyed by job URL. In memory only and deliberately
+     so: it is the employer's copy, it averages ~5,000 characters, and keeping it would
+     turn a page that stores no posting text into one that does. Lives as long as the tab. */
+  descs: new Map(),
 };
 const PAGE = 40;
 
@@ -1164,10 +1168,42 @@ ${top.map((j, i) => `${i}. ${j.t} — ${j.c}${j.l ? ", " + j.l : ""}${j.y ? ` ($
 /* ---------- tailoring ---------- */
 let lastTailor = null;
 
+/* The page carries no posting text of its own - descriptions are the employer's copy and
+   average ~5,000 characters, which is why they were never inlined. That left the rewrite
+   working from a title and a handful of keyword-matched tags. This is the way out that
+   does not reproduce anyone's ad: the reader opens the posting, pastes it here, and it
+   goes straight into the prompt and then out of memory when the tab closes. */
+function descPanel(job, action) {
+  const cur = state.descs.get(job.u) || "";
+  return `<details class="sec" id="descwrap"${cur ? " open" : ""}>
+    <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:13px">
+      ${cur ? "Posting text added — edit it" : "Paste the real posting for a sharper rewrite"}
+    </summary>
+    <p class="note" style="margin:9px 0">Open the posting, copy the description, paste it
+    here. Without it the rewrite is working from the job title and some keyword tags; with
+    it, it is working from what the employer actually asked for. Kept in this browser tab
+    only — never saved into the page.</p>
+    <textarea class="cv" id="descbox" style="min-height:120px"
+      placeholder="Paste the job description here…">${esc(cur)}</textarea>
+    <button class="btn sm" id="descgo" style="margin-top:9px">${esc(action)}</button>
+  </details>`;
+}
+
+function wireDescPanel(job) {
+  const go = $("descgo");
+  if (!go) return;
+  go.addEventListener("click", () => {
+    const text = $("descbox").value.trim();
+    if (text) state.descs.set(job.u, text); else state.descs.delete(job.u);
+    tailor(job);
+  });
+}
+
 /* The whole instruction, in one place. The Claude version sends it; the public site hands
    it over to be pasted somewhere else. Anything that improves it improves both. */
-function tailorPrompt(cv, job) {
+function tailorPrompt(cv, job, desc) {
   const skills = job.k.map((k) => DATA.vocab[k]).join(", ");
+  const posting = (desc || "").trim();
   return `Rewrite this candidate's CV for the specific job below. Return an ATS-safe CV.
 
 HARD RULES — these are not style preferences:
@@ -1194,7 +1230,23 @@ Employer: ${job.c}
 Location: ${job.l || "India"}
 Posting: ${job.u}
 ${job.y ? `Experience asked for: ${job.y}+ years` : ""}
-Skills named in the posting: ${skills}
+Skill tags (derived by keyword match, not the employer's words): ${skills}
+
+${posting
+? `POSTING — the employer's own text, pasted in by the candidate. This is the authority on
+what this job actually requires. Where it disagrees with the skill tags above, the posting
+wins; the tags are a rough index and nothing more. Draw every entry in "coverage" from real
+requirements in this text, quoting the requirement in the candidate's own terms.
+"""
+${posting.slice(0, 14000)}
+"""`
+: `NO POSTING TEXT WAS SUPPLIED. You are working from the title, employer and the derived
+skill tags only — you have not seen what the employer actually asked for. So:
+- Base "coverage" on what the title and tags reasonably imply, and say plainly in each
+  "note" that the requirement is inferred rather than read from the ad.
+- Do not state or imply that the posting requires something you cannot see.
+- Make the first item of "changes" a line telling them that pasting the real posting text
+  into this page produces a sharper, evidence-based rewrite.`}
 
 CV
 ${cv.slice(0, 12000)}`;
@@ -1209,7 +1261,9 @@ async function tailor(job) {
   $("dfoot").innerHTML = posting
     ? `<a class="btn ghost" href="${esc(posting)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`
     : `<span class="note">This posting has no usable link.</span>`;
-  dlg.showModal();
+  // Re-tailoring with pasted posting text calls this again with the dialog already up,
+  // and showModal() on an open dialog throws.
+  if (!dlg.open) dlg.showModal();
 
   if (cv.length < 120) {
     $("dbody").innerHTML = `<div class="empty"><h3>Paste your CV first</h3><p>Add your CV in the panel on the left, then come back and I will rewrite it for this posting.</p></div>`;
@@ -1224,7 +1278,7 @@ async function tailor(job) {
   $("dbody").innerHTML = `<div class="status"><span class="spin"></span><span>Rewriting your CV for this posting…</span></div>`;
   try {
     const out = await sample.json(
-      [{ role: "user", content: tailorPrompt(cv, job) }], { modelTier: "complex" });
+      [{ role: "user", content: tailorPrompt(cv, job, state.descs.get(job.u)) }], { modelTier: "complex" });
 
     lastTailor = { out, job };
     renderTailor(out, job);
@@ -1236,8 +1290,9 @@ async function tailor(job) {
 /* No Claude here, so hand over the work rather than the disappointment: the same prompt
    the Claude version would have sent, ready to paste into any assistant. */
 function showPromptFallback(cv, job) {
-  const prompt = tailorPrompt(cv, job);
+  const prompt = tailorPrompt(cv, job, state.descs.get(job.u));
   $("dbody").innerHTML = `
+    ${descPanel(job, "Rebuild the prompt with it")}
     <div class="sec">
       <h4>Your prompt for this posting</h4>
       <p class="note" style="margin-bottom:10px">This page cannot run Claude, but the work
@@ -1246,6 +1301,7 @@ function showPromptFallback(cv, job) {
       and this posting are already in it.</p>
       <textarea class="cv" id="promptbox" readonly style="min-height:260px;font-family:var(--mono);font-size:12.5px">${esc(prompt)}</textarea>
     </div>`;
+  wireDescPanel(job);
   $("dfoot").innerHTML = `
     <span class="note" style="margin-right:auto;align-self:center" id="copystate"></span>
     ${safeUrl(job.u) ? `<a class="btn quiet" href="${esc(safeUrl(job.u))}" target="_blank" rel="noopener noreferrer">Open the posting</a>` : ""}
@@ -1275,6 +1331,7 @@ function renderTailor(out, job) {
      <ul>${(r.bullets || []).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`).join("");
 
   $("dbody").innerHTML = `
+    ${descPanel(job, "Re-tailor with the posting")}
     ${cov ? `<div class="sec"><h4>Requirement coverage</h4><ul class="cov">${cov}</ul></div>` : ""}
     ${(out.gaps || []).length ? `<div class="sec"><h4>What you genuinely lack</h4><ul>${out.gaps.map((g) => `<li>${esc(g)}</li>`).join("")}</ul></div>` : ""}
     <div class="sec"><h4>Professional summary</h4><p class="prev">${esc(out.summary || "")}</p></div>
@@ -1291,6 +1348,7 @@ function renderTailor(out, job) {
     <a class="btn ghost" href="${esc(job.u)}" target="_blank" rel="noopener noreferrer">Open the posting</a>`;
   $("dl").addEventListener("click", () => downloadCv("docx"));
   $("dlpdf").addEventListener("click", () => downloadCv("pdf"));
+  wireDescPanel(job);
 }
 
 /* ---------- docx ----------
