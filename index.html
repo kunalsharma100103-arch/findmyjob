@@ -1290,7 +1290,7 @@ function renderTailor(out, job) {
    PDF text extraction produces them routinely (form feeds between pages, vertical tabs
    inside a table), and that text reaches here through the CV. Tab, newline and carriage
    return are the three that are legal. */
-const XML_ILLEGAL = /[ --￾￿]/g;
+const XML_ILLEGAL = /[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/g;
 const X = (s) => String(s ?? "").replace(XML_ILLEGAL, "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 function para(text, opts = {}) {
