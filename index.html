@@ -572,8 +572,11 @@ function filtered() {
     return state.showHidden;
   });
   state.excluded = excluded;
-  if (state.sort === "match" && state.cvSkills) {
-    state.cvTotal = cvWeight(state.cvSkills);
+  const ranked = state.sort !== "date" && state.cvSkills;
+  if (ranked) state.cvTotal = cvWeight(state.cvSkills);
+  if (ranked && state.sort === "both") {
+    rows.sort((a, b) => rankOf(b) - rankOf(a) || (b.d || "").localeCompare(a.d || ""));
+  } else if (ranked) {
     rows.sort((a, b) => scoreOf(b) - scoreOf(a) || (b.d || "").localeCompare(a.d || ""));
   } else {
     rows.sort((a, b) => (b.d || "").localeCompare(a.d || ""));
@@ -585,6 +588,20 @@ function scoreOf(job) {
   if (graded) return 0.6 + graded.score / 250;      // a graded job always outranks an ungraded one
   return state.cvSkills ? localScore(job, state.cvSkills, state.cvTotal) * 0.6 : 0;
 }
+
+/* Both chips on. A list has only one order, so "newest AND best match" cannot mean two
+   orders at once - it means one ranking that answers "a good fit, and still fresh".
+   Freshness rides on top of the match score rather than running as a separate pass: a role
+   posted today is worth up to +0.2, fading to nothing at a month old. A clearly better
+   match still wins; a near-tie goes to the newer posting, which is the honest reading of
+   wanting both. Deliberately not a filter - nothing is hidden, only reordered. */
+const FRESH_MAX = 0.2, FRESH_DAYS = 30;
+function freshness(job) {
+  const n = daysOld(job.d);
+  if (n === null) return 0;                          // undated: ranked on match alone
+  return FRESH_MAX * Math.max(0, 1 - n / FRESH_DAYS);
+}
+const rankOf = (job) => scoreOf(job) + freshness(job);
 
 /* ---------- rendering ---------- */
 function jobRow(job, i) {
@@ -660,7 +677,7 @@ function render() {
       `<button class="linkish" data-act="show">${state.showHidden ? "stop showing" : "show"}</button>` +
       (state.hidden.size ? ` <button class="linkish" data-act="restore">restore ${state.hidden.size}</button>` : "")
     : "";
-  $("count").innerHTML = `<strong>${live.toLocaleString("en-IN")}</strong> ${live === 1 ? "role" : "roles"}${state.cvSkills ? " · ranked against your CV" : ""}${back}`;
+  $("count").innerHTML = `<strong>${live.toLocaleString("en-IN")}</strong> ${live === 1 ? "role" : "roles"}${state.cvSkills ? (state.sort === "both" ? " · best match, freshest first on close calls" : state.sort === "match" ? " · ranked against your CV" : " · newest first") : ""}${back}`;
   $("more").hidden = shown.length >= rows.length;
   $("more").textContent = `Show more (${(rows.length - shown.length).toLocaleString("en-IN")} left)`;
 }
@@ -732,10 +749,30 @@ function openRequestedJob() {
    disappearing, so the choice is visible before you have anything to rank against. */
 function sortChips() {
   const hasCv = !!state.cvSkills;
+  const lit = (v) => state.sort === v || state.sort === "both";
   return [["date", "Newest first"], ["match", "Best match"]].map(([v, l]) =>
-    `<button class="chip" data-v="${v}" aria-pressed="${state.sort === v}"` +
+    `<button class="chip" data-v="${v}" aria-pressed="${lit(v)}"` +
     (v === "match" && !hasCv ? ` disabled title="Upload a CV first to sort by match"` : "") +
     `>${l}</button>`).join("");
+}
+
+/* Not chipGroup: these two combine. Turning both on blends them (see rankOf); turning the
+   last one off is refused rather than silently reverting, because a list with no order is
+   not a state the reader can have asked for. */
+function wireSort() {
+  $("sort").addEventListener("click", (e) => {
+    const b = e.target.closest(".chip");
+    if (!b || b.disabled) return;
+    const on = new Set(state.sort === "both" ? ["date", "match"] : [state.sort]);
+    if (on.has(b.dataset.v)) {
+      if (on.size === 1) return;
+      on.delete(b.dataset.v);
+    } else on.add(b.dataset.v);
+    state.sort = on.size === 2 ? "both" : [...on][0];
+    $("sort").innerHTML = sortChips();
+    state.page = 1;
+    render();
+  });
 }
 
 function chipGroup(el, key) {
@@ -753,7 +790,7 @@ function wire() {
   $("city").addEventListener("change", (e) => { state.city = e.target.value; state.page = 1; render(); });
   $("company").addEventListener("change", (e) => { state.company = e.target.value; state.page = 1; render(); });
   $("yrs").addEventListener("change", (e) => { state.yrs = Number(e.target.value) || 0; state.page = 1; render(); });
-  chipGroup($("sort"), "sort");
+  wireSort();
   chipGroup($("days"), "days");
   chipGroup($("mode"), "mode");
   // Not chipGroup: these are independent toggles, not one-of-many.
