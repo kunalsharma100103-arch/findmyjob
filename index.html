@@ -99,6 +99,7 @@ label.f{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.
 .chipset{display:flex;flex-wrap:wrap;gap:6px}
 .chip{padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--paper);font-size:12.5px;cursor:pointer;color:var(--ink-2)}
 .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.chip:disabled{opacity:.45;cursor:not-allowed}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:14px;cursor:pointer}
 .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -320,8 +321,8 @@ footer p{margin:0 0 6px;max-width:78ch}
       <div class="resbar">
         <p id="count"></p>
         <div style="display:flex;gap:8px;align-items:center">
-          <label class="f" for="sort" style="margin:0">Sort</label>
-          <select class="field" id="sort" style="width:auto"></select>
+          <span class="f" style="margin:0">Sort</span>
+          <div class="chipset" id="sort"></div>
         </div>
       </div>
       <ol class="jobs" id="list"></ol>
@@ -681,7 +682,7 @@ function boot() {
   $("city").innerHTML = opt("", "All cities") + DATA.cities.map((c) => opt(c, c)).join("");
   $("company").innerHTML = opt("", "All employers") + DATA.companies.map((c) => opt(c, c)).join("");
   $("yrs").innerHTML = opt("", "Any") + [2, 3, 5, 8, 10].map((y) => opt(y, `${y} years or fewer`)).join("");
-  $("sort").innerHTML = opt("date", "Newest first");
+  $("sort").innerHTML = sortChips();
 
   $("days").innerHTML = [[0, "Any"], [3, "3 days"], [7, "A week"], [30, "A month"]]
     .map(([v, l]) => `<button class="chip" data-v="${v}" aria-pressed="${v === 0}">${l}</button>`).join("");
@@ -721,6 +722,18 @@ function openRequestedJob() {
   tailor(job);
 }
 
+/* "Newest first" and "Best match" as two chips rather than one <select> with two options:
+   each is its own filter you can see and pick directly, not a value hidden inside a
+   dropdown. Best match stays a real (disabled) chip even with no CV loaded, rather than
+   disappearing, so the choice is visible before you have anything to rank against. */
+function sortChips() {
+  const hasCv = !!state.cvSkills;
+  return [["date", "Newest first"], ["match", "Best match"]].map(([v, l]) =>
+    `<button class="chip" data-v="${v}" aria-pressed="${state.sort === v}"` +
+    (v === "match" && !hasCv ? ` disabled title="Upload a CV first to sort by match"` : "") +
+    `>${l}</button>`).join("");
+}
+
 function chipGroup(el, key) {
   el.addEventListener("click", (e) => {
     const b = e.target.closest(".chip"); if (!b) return;
@@ -736,7 +749,7 @@ function wire() {
   $("city").addEventListener("change", (e) => { state.city = e.target.value; state.page = 1; render(); });
   $("company").addEventListener("change", (e) => { state.company = e.target.value; state.page = 1; render(); });
   $("yrs").addEventListener("change", (e) => { state.yrs = Number(e.target.value) || 0; state.page = 1; render(); });
-  $("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.page = 1; render(); });
+  chipGroup($("sort"), "sort");
   chipGroup($("days"), "days");
   chipGroup($("mode"), "mode");
   // Not chipGroup: these are independent toggles, not one-of-many.
@@ -968,7 +981,7 @@ function clearCv() {
   $("tracks").innerHTML = "";
   state.cvSkills = null; state.cvTotal = 0; state.scores = null; state.tracks = [];
   state.sort = "date"; state.page = 1;
-  $("sort").innerHTML = `<option value="date">Newest first</option>`;
+  $("sort").innerHTML = sortChips();
   say(""); render();
 }
 
@@ -1075,7 +1088,7 @@ async function runMatch() {
   state.cvTotal = cvWeight(state.cvSkills);
   state.scores = null;
   state.sort = "match";
-  $("sort").innerHTML = `<option value="match">Best match</option><option value="date">Newest first</option>`;
+  $("sort").innerHTML = sortChips();
   state.page = 1; render();
   say(`Matched ${state.cvSkills.size} skills from your CV against ${DATA.count.toLocaleString("en-IN")} roles.`, false);
 
