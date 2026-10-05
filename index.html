@@ -468,7 +468,7 @@ function buildHideRe() {
    one hid all 96, grading one showed the same score and the same "your evidence" on all
    of them, and Tailor CV rewrote the CV for whichever of them happened to be first in the
    array. Title and employer separate them; the URL alone never did. */
-const jobKey = (j) => [j.u, j.t, j.c, j.l || ""].join(" ");
+const jobKey = (j) => [j.u, j.t, j.c, j.l || ""].join("\u0000");
 
 const isHidden = (job) => state.hidden.has(jobKey(job)) || !!(state.hideRe && state.hideRe.test(job.t));
 
